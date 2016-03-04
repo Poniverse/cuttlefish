@@ -1,0 +1,76 @@
+---
+
+- name: copy source
+  synchronize: src=../../../../..   dest=/home/cuttlefish/
+      rsync_opts="--exclude 'contrib' --exclude 'provisioning'  --exclude='.vagrant' --exclude='.env' --exclude='config/database.yml'"
+  notify: restart cuttlefish
+  #--exclude='.git'
+
+- name: patch Gemfile for puma
+  lineinfile: dest=/home/cuttlefish/Gemfile
+              line="gem 'puma'"
+              insertbefore='gem "pundit"'
+              state=present
+
+- name: patch Gemfile.lock for puma (name)
+  lineinfile: dest=/home/cuttlefish/Gemfile.lock
+              line='  puma'
+              insertbefore='  pundit'
+              state=present
+
+- name: patch Gemfile.lock for puma (version)
+  lineinfile: dest=/home/cuttlefish/Gemfile.lock
+              line='    puma (2.15.3)'
+              insertbefore='    pundit \(0\.3\.0\)'
+              state=present
+
+- name: puma.rb
+  copy: src=puma.rb dest=/home/cuttlefish/config/puma.rb
+  notify: restart cuttlefish
+
+- name: remove skylight from Gemfile
+  lineinfile: state=absent
+              dest=/home/cuttlefish/Gemfile
+              line='gem "skylight"'
+  when: skylight_application is not defined
+
+- name: remove skylight (version) from Gemfile.lock
+  lineinfile: state=absent
+              dest=/home/cuttlefish/Gemfile.lock
+              line='    skylight (0.5.2)'
+  when: skylight_application is not defined
+
+- name: remove skylight (name) from Gemfile.lock
+  lineinfile: state=absent
+              dest=/home/cuttlefish/Gemfile.lock
+              line='  skylight'
+  when: skylight_application is not defined
+
+- name: bundle install
+  command: bundle install --frozen --path=vendor --quiet
+           chdir=/home/cuttlefish
+
+- name: database.yml
+  template: src=database.yml.j2 dest=/home/cuttlefish/config/database.yml
+  notify: restart cuttlefish
+
+- name: .env setup
+  template: src=env.j2 dest=/home/cuttlefish/.env
+  notify: restart cuttlefish
+
+- name: revision
+  delegate_to: 127.0.0.1
+  command: git describe --always
+  register: revision
+  always_run: true
+
+- name: REVISION
+  copy: "content='{{ revision.stdout }}' dest=/home/cuttlefish/REVISION"
+
+- name: db migrate
+  shell: RACK_ENV=production bundle exec rake db:migrate
+         chdir=/home/cuttlefish
+
+- name: assets
+  shell: RACK_ENV=development bundle exec rake assets:environment assets:precompile
+         chdir=/home/cuttlefish
